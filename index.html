@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evolving Game of Life</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #1a1a1a;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+        }
+        
+        #info {
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+        
+        #controls {
+            margin-bottom: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        
+        button {
+            padding: 8px 16px;
+            background: #00ff80;
+            border: none;
+            color: #000;
+            font-weight: bold;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+        }
+        
+        button:hover {
+            background: #00dd70;
+        }
+        
+        canvas {
+            border: 2px solid #00ff80;
+            cursor: crosshair;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">Step: 0 | Generation: 0</div>
+    <div id="controls">
+        <button id="pauseBtn">Pause</button>
+        <button id="clearBtn">Clear (C)</button>
+        <button id="randomBtn">Random (G)</button>
+    </div>
+    <canvas id="canvas" width="800" height="800"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Constants
+        const WIDTH = 800;
+        const HEIGHT = 800;
+        const GRID_COUNT = 3;
+        const SEPARATOR_WIDTH = 10;
+        const GAME_SIZE = Math.floor((WIDTH - (GRID_COUNT + 1) * SEPARATOR_WIDTH) / GRID_COUNT);
+        const TILE_SIZE = 5;
+        const GRID_WIDTH = Math.floor(GAME_SIZE / TILE_SIZE);
+        const GRID_HEIGHT = Math.floor(GAME_SIZE / TILE_SIZE);
+        const FPS = 60;
+        
+        // Colors
+        const DEAD = '#000000';
+        const ALIVE = '#00ff80';
+        const GRIDLINES = '#808080';
+        const SEPARATOR = '#323232';
+        
+        // Game state
+        let grids = [];
+        let weights = [];
+        let playing = true;
+        let count = 0;
+        let updateFreq = 5;
+        let step = 0;
+        let generation = 0;
+        
+        // Initialize grids and weights
+        function init() {
+            grids = [];
+            weights = [];
+            
+            for (let i = 0; i < 9; i++) {
+                grids.push(new Set());
+                weights.push(Array.from({length: 8}, () => randInt(-3, 4)));
+            }
+            
+            for (let i = 0; i < 9; i++) {
+                grids[i] = genCell(randInt(2, 6) * GRID_WIDTH);
+            }
+        }
+        
+        function randInt(min, max) {
+            return Math.floor(Math.random() * (max - min)) + min;
+        }
+        
+        function genCell(num) {
+            const cells = new Set();
+            for (let i = 0; i < num; i++) {
+                const x = randInt(0, Math.floor(GRID_WIDTH / 3));
+                const y = randInt(0, Math.floor(GRID_HEIGHT / 3));
+                cells.add(`${x + Math.floor(GRID_WIDTH / 3)},${y + Math.floor(GRID_HEIGHT / 3)}`);
+            }
+            return cells;
+        }
+        
+        function gen(num) {
+            const cells = new Set();
+            for (let i = 0; i < num; i++) {
+                cells.add(`${randInt(0, GRID_WIDTH)},${randInt(0, GRID_HEIGHT)}`);
+            }
+            return cells;
+        }
+        
+        function getNeighbors(pos) {
+            const [x, y] = pos.split(',').map(Number);
+            const neighbors = [];
+            
+            for (let dx = -1; dx <= 1; dx++) {
+                const nx = x + dx;
+                if (nx < 0 || nx >= GRID_WIDTH) continue;
+                
+                for (let dy = -1; dy <= 1; dy++) {
+                    const ny = y + dy;
+                    if (ny < 0 || ny >= GRID_HEIGHT) continue;
+                    if (dx === 0 && dy === 0) continue;
+                    
+                    neighbors.push(`${nx},${ny}`);
+                }
+            }
+            
+            return neighbors;
+        }
+        
+        function getEnv(pos, weights, positions) {
+            const [x, y] = pos.split(',').map(Number);
+            let env = 0;
+            let weightCount = 0;
+            
+            for (let dx = -1; dx <= 1; dx++) {
+                const nx = x + dx;
+                if (nx < 0 || nx >= GRID_WIDTH) continue;
+                
+                for (let dy = -1; dy <= 1; dy++) {
+                    const ny = y + dy;
+                    if (ny < 0 || ny >= GRID_HEIGHT) continue;
+                    if (dx === 0 && dy === 0) continue;
+                    
+                    if (positions.has(`${nx},${ny}`)) {
+                        env += weights[weightCount];
+                    }
+                    weightCount++;
+                }
+            }
+            
+            return env;
+        }
+        
+        function nextGen(positions, weights_) {
+            const newPositions = new Set();
+            const allNeighbors = new Set();
+            const [a, b, c, d] = [1, 3, 2, 3]; // survival, birth
+            
+            for (const position of positions) {
+                const env = getEnv(position, weights_, positions);
+                const neighbors = getNeighbors(position);
+                neighbors.forEach(n => allNeighbors.add(n));
+                
+                if (env >= a && env < b) {
+                    newPositions.add(position);
+                }
+            }
+            
+            for (const position of allNeighbors) {
+                const env = getEnv(position, weights_, positions);
+                
+                if (env >= c && env < d) {
+                    newPositions.add(position);
+                }
+            }
+            
+            return newPositions;
+        }
+        
+        function score(positions) {
+            return positions.size;
+        }
+        
+        function drawGrid(positions, offsetX, offsetY) {
+            // Draw cells
+            for (const pos of positions) {
+                const [col, row] = pos.split(',').map(Number);
+                ctx.fillStyle = ALIVE;
+                ctx.fillRect(offsetX + col * TILE_SIZE, offsetY + row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            }
+            
+            // Draw grid lines
+            ctx.strokeStyle = GRIDLINES;
+            ctx.lineWidth = 0.5;
+            
+            for (let row = 0; row <= GRID_HEIGHT; row++) {
+                const y = offsetY + row * TILE_SIZE;
+                ctx.beginPath();
+                ctx.moveTo(offsetX, y);
+                ctx.lineTo(offsetX + GAME_SIZE, y);
+                ctx.stroke();
+            }
+            
+            for (let col = 0; col <= GRID_WIDTH; col++) {
+                const x = offsetX + col * TILE_SIZE;
+                ctx.beginPath();
+                ctx.moveTo(x, offsetY);
+                ctx.lineTo(x, offsetY + GAME_SIZE);
+                ctx.stroke();
+            }
+        }
+        
+        function evolve() {
+            const scores = grids.map(score);
+            
+            // Selection
+            const ranked = [...Array(9).keys()].sort((a, b) => scores[b] - scores[a]);
+            const slotList = [
+                ...Array(3).fill(ranked[0]),
+                ...Array(2).fill(ranked[1]),
+                ...Array(2).fill(ranked[2]),
+                ranked[3],
+                ranked[4]
+            ];
+            
+            // Shuffle
+            for (let i = slotList.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [slotList[i], slotList[j]] = [slotList[j], slotList[i]];
+            }
+            
+            // Copy weights
+            const newWeights = slotList.map(id => [...weights[id]]);
+            weights = newWeights;
+            
+            // Mutation
+            for (let i = 0; i < randInt(1, 5); i++) {
+                const mutatingGame = randInt(0, 9);
+                for (let j = 0; j < randInt(1, 4); j++) {
+                    const weightIndex = randInt(0, 8);
+                    weights[mutatingGame][weightIndex] += Math.random() < 0.5 ? -1 : 1;
+                }
+            }
+            
+            // Reset grids
+            for (let i = 0; i < 9; i++) {
+                grids[i] = genCell(randInt(2, 6) * GRID_WIDTH);
+            }
+        }
+        
+        function update() {
+            if (playing) {
+                count++;
+            }
+            
+            if (count >= updateFreq) {
+                count = 0;
+                step++;
+                
+                // Update all grids
+                for (let i = 0; i < 9; i++) {
+                    grids[i] = nextGen(grids[i], weights[i]);
+                }
+            }
+            
+            if (step >= 18) {
+                playing = false;
+                count = 0;
+                evolve();
+                step = 0;
+                playing = true;
+                generation++;
+            }
+        }
+        
+        function draw() {
+            // Clear background
+            ctx.fillStyle = SEPARATOR;
+            ctx.fillRect(0, 0, WIDTH, HEIGHT);
+            
+            // Draw all 9 grids
+            for (let gridRow = 0; gridRow < GRID_COUNT; gridRow++) {
+                for (let gridCol = 0; gridCol < GRID_COUNT; gridCol++) {
+                    const offsetX = SEPARATOR_WIDTH + gridCol * (GAME_SIZE + SEPARATOR_WIDTH);
+                    const offsetY = SEPARATOR_WIDTH + gridRow * (GAME_SIZE + SEPARATOR_WIDTH);
+                    
+                    // Draw background
+                    ctx.fillStyle = DEAD;
+                    ctx.fillRect(offsetX, offsetY, GAME_SIZE, GAME_SIZE);
+                    
+                    // Draw grid
+                    const gridIndex = gridRow * GRID_COUNT + gridCol;
+                    drawGrid(grids[gridIndex], offsetX, offsetY);
+                }
+            }
+            
+            // Update info
+            document.getElementById('info').textContent = 
+                `Step: ${step} | Generation: ${generation} | ${playing ? 'Running' : 'Paused'}`;
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            for (let gridRow = 0; gridRow < GRID_COUNT; gridRow++) {
+                for (let gridCol = 0; gridCol < GRID_COUNT; gridCol++) {
+                    const offsetX = SEPARATOR_WIDTH + gridCol * (GAME_SIZE + SEPARATOR_WIDTH);
+                    const offsetY = SEPARATOR_WIDTH + gridRow * (GAME_SIZE + SEPARATOR_WIDTH);
+                    
+                    if (x >= offsetX && x < offsetX + GAME_SIZE &&
+                        y >= offsetY && y < offsetY + GAME_SIZE) {
+                        const col = Math.floor((x - offsetX) / TILE_SIZE);
+                        const row = Math.floor((y - offsetY) / TILE_SIZE);
+                        const pos = `${col},${row}`;
+                        const gridIndex = gridRow * GRID_COUNT + gridCol;
+                        
+                        if (grids[gridIndex].has(pos)) {
+                            grids[gridIndex].delete(pos);
+                        } else {
+                            grids[gridIndex].add(pos);
+                        }
+                        return;
+                    }
+                }
+            }
+        });
+        
+        document.getElementById('pauseBtn').addEventListener('click', () => {
+            playing = !playing;
+            document.getElementById('pauseBtn').textContent = playing ? 'Pause' : 'Play';
+        });
+        
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            for (let i = 0; i < 9; i++) {
+                grids[i].clear();
+            }
+            playing = false;
+            count = 0;
+            step = 0;
+            document.getElementById('pauseBtn').textContent = 'Play';
+        });
+        
+        document.getElementById('randomBtn').addEventListener('click', () => {
+            step = 0;
+            for (let i = 0; i < 9; i++) {
+                grids[i] = gen(randInt(30, 40) * GRID_WIDTH);
+            }
+        });
+        
+        document.addEventListener('keydown', (e) => {
+            if (e.key === ' ') {
+                e.preventDefault();
+                playing = !playing;
+                document.getElementById('pauseBtn').textContent = playing ? 'Pause' : 'Play';
+            } else if (e.key.toLowerCase() === 'c') {
+                for (let i = 0; i < 9; i++) {
+                    grids[i].clear();
+                }
+                playing = false;
+                count = 0;
+                step = 0;
+                document.getElementById('pauseBtn').textContent = 'Play';
+            } else if (e.key.toLowerCase() === 'g') {
+                step = 0;
+                for (let i = 0; i < 9; i++) {
+                    grids[i] = gen(randInt(30, 40) * GRID_WIDTH);
+                }
+            }
+        });
+        
+        // Start
+        init();
+        gameLoop();
+    </script>
+</body>
+</html>
